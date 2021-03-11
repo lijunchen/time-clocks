@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 // Command: request/release
 
 const Interval = 1 * time.Millisecond
+const RandRange = 10
 
 type Message struct {
 	Type  string // Request, Release, Ack
@@ -56,18 +58,19 @@ func removeBySrc(messages []Message, src int) []Message {
 }
 
 type Process struct {
-	me        int
-	clock     int
-	queue     []Message
-	recv      chan Message
-	send      chan Message
-	n         int
-	mu        sync.Mutex
-	lastClock []int
-	_channels *[10][10]chan Message
+	me         int
+	clock      int
+	queue      []Message
+	recv       chan Message
+	send       chan Message
+	n          int
+	mu         sync.Mutex
+	lastClock  []int
+	_channels  *[][]chan Message
+	haveSource bool
 }
 
-func NewProcess(i int, n int, _channels *[10][10]chan Message) *Process {
+func NewProcess(i int, n int, _channels *[][]chan Message) *Process {
 	return &Process{
 		i,
 		0,
@@ -78,6 +81,7 @@ func NewProcess(i int, n int, _channels *[10][10]chan Message) *Process {
 		sync.Mutex{},
 		make([]int, n),
 		_channels,
+		false,
 	}
 }
 
@@ -85,11 +89,12 @@ func NewProcess(i int, n int, _channels *[10][10]chan Message) *Process {
 
 func (p *Process) granted() bool {
 	for !p._granted() {
-		time.Sleep(Interval)
+		time.Sleep(Interval * time.Duration(rand.Intn(RandRange)))
 	}
 	p.mu.Lock()
 	p.clock++
 	p.mu.Unlock()
+	p.haveSource = true
 	return true
 }
 
@@ -138,6 +143,7 @@ func (p *Process) request() {
 
 func (p *Process) release() {
 	log.Printf("%v.%d release\n", S(p.me), p.clock)
+	p.haveSource = false
 	p.mu.Lock()
 	p.queue = removeBySrc(p.queue, p.me)
 	for i := 0; i < p.n; i++ {
@@ -162,10 +168,10 @@ func (p *Process) start() {
 			}
 			go func(i int) {
 				// i -> me
-				for msg := range p._channels[i][p.me] {
+				for msg := range (*p._channels)[i][p.me] {
 					log.Printf("%v.%d recv: %v\n", S(p.me), p.clock, msg)
 					p.recv <- msg
-					time.Sleep(Interval)
+					time.Sleep(Interval * time.Duration(rand.Intn(RandRange)))
 				}
 			}(i)
 		}
@@ -177,8 +183,8 @@ func (p *Process) start() {
 		for msg := range p.send {
 			// me -> msg.Dst
 			log.Printf("%v.%d send: %v\n", S(p.me), p.clock, msg)
-			p._channels[p.me][msg.Dst] <- msg
-			time.Sleep(Interval)
+			(*p._channels)[p.me][msg.Dst] <- msg
+			time.Sleep(Interval * time.Duration(rand.Intn(RandRange)))
 		}
 	}()
 
@@ -209,64 +215,48 @@ func (p *Process) start() {
 	}()
 
 	go func() {
-		first := true
 		for {
-			if first {
-				first = false
-				if p.me != 0 {
-					p.request()
-				}
-			} else {
+			if p.haveSource == false {
 				p.request()
 			}
-
 			p.granted()
 			// enter CS
 			log.Printf("%v.%d using\n", S(p.me), p.clock)
-			// time.Sleep(10 * Interval)
 
 			p.release()
-			time.Sleep(Interval)
+			time.Sleep(Interval * time.Duration(rand.Intn(RandRange)))
 		}
 	}()
 }
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	n := 5
 
-	channels := [10][10]chan Message{}
-	for i := 0; i < 10; i++ {
-		for j := 0; j < 10; j++ {
+	channels := make([][]chan Message, n)
+	for i := range channels {
+		channels[i] = make([]chan Message, n)
+		for j := range channels[i] {
 			if i == j {
 				continue
 			}
 			channels[i][j] = make(chan Message, 1)
 		}
 	}
-	n := 3
 
 	initp := 0
 	initc := -1
 	msg0 := Message{"Request", initp, initp, initc}
 
-	p0 := NewProcess(0, n, &channels)
-	p0.queue = append(p0.queue, msg0)
-
-	p1 := NewProcess(1, n, &channels)
-	p1.queue = append(p1.queue, msg0)
-
-	p2 := NewProcess(2, n, &channels)
-	p2.queue = append(p2.queue, msg0)
-
-	go p0.start()
-	go p1.start()
-	go p2.start()
-	go func() {
-		for true {
-			time.Sleep(Interval)
+	processQueue := make([]*Process, n)
+	for i, p := range processQueue {
+		p = NewProcess(i, n, &channels)
+		if i == 0 {
+			p.haveSource = true
 		}
-	}()
-
+		p.queue = append(p.queue, msg0)
+		go p.start()
+	}
 	ch := make(chan int)
 	<-ch
 }
