@@ -139,7 +139,7 @@ func (p *Process) request() {
 func (p *Process) release() {
 	log.Printf("%v.%d release\n", S(p.me), p.clock)
 	p.mu.Lock()
-	removeBySrc(p.queue, p.me)
+	p.queue = removeBySrc(p.queue, p.me)
 	for i := 0; i < p.n; i++ {
 		if i == p.me {
 			continue
@@ -223,7 +223,7 @@ func (p *Process) start() {
 			p.granted()
 			// enter CS
 			log.Printf("%v.%d using\n", S(p.me), p.clock)
-			time.Sleep(10 * Interval)
+			// time.Sleep(10 * Interval)
 
 			p.release()
 			time.Sleep(Interval)
