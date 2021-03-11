@@ -91,10 +91,10 @@ func (p *Process) granted() bool {
 	for !p._granted() {
 		time.Sleep(Interval * time.Duration(rand.Intn(RandRange)))
 	}
+	p.haveSource = true
 	p.mu.Lock()
 	p.clock++
 	p.mu.Unlock()
-	p.haveSource = true
 	return true
 }
 
